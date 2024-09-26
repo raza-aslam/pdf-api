@@ -6,7 +6,7 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
 from Database.db import create_tables
-from Database.setting import DB_SESSION
+from Database.setting import DB_SESSION, sendername, senderemail, SMTP_PASSWORD
 
 
 class User(SQLModel, table=True):
@@ -25,8 +25,7 @@ PDF_PATH = Path(__file__).parent / "pdfs" / "book.pdf"  # Use Path for PDF path
  # Ensure this is correct
 
 # Static sender information
-SENDER_NAME = "raza"  # Static sender name
-SENDER_EMAIL = "muhammadrazaaslam786@gmail.com"  # Static sender email
+ # Static sender email
 
 # Utility function to send email
 def send_email_with_pdf(to_email: str, username: str):
@@ -40,7 +39,7 @@ def send_email_with_pdf(to_email: str, username: str):
         # Email setup
         msg = EmailMessage()
         msg['Subject'] = f'Your PDF file {pdf_file_name}'
-        msg['From'] = formataddr((SENDER_NAME, SENDER_EMAIL))
+        msg['From'] = formataddr((sendername, senderemail))
         msg['To'] = to_email
 
         # Email body content
@@ -53,7 +52,7 @@ def send_email_with_pdf(to_email: str, username: str):
 
         # SMTP server connection
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(SENDER_EMAIL, 'yfun hosn gbti pueh')  # Use the correct password or App Password
+            smtp.login(senderemail, SMTP_PASSWORD)  # Use the correct password or App Password
             smtp.send_message(msg)
 
         return True
