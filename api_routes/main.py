@@ -1,3 +1,4 @@
+from PyPDF2 import PdfReader
 from fastapi import FastAPI, HTTPException
 from sqlmodel import SQLModel, Field, select
 from fastapi.responses import JSONResponse
@@ -7,7 +8,10 @@ from email.utils import formataddr
 from pathlib import Path
 from Database.db import create_tables
 from Database.setting import DB_SESSION, sendername, senderemail, SMTP_PASSWORD
-
+import base64
+from io import BytesIO
+from PIL import Image
+import pdfplumber
 
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -77,3 +81,44 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
     return session.exec(select(User)).all()  # Retrieve all users
+
+
+
+def image_to_base64(image: Image.Image) -> str:
+    buffered = BytesIO()
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
+@app.get("/read-pdf/")
+async def read_pdf():
+    # Check if the PDF file exists
+    if not PDF_PATH.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+
+    pdf_content = {"text": "", "images": []}
+
+    try:
+        # Use pdfplumber to read the PDF content
+        with pdfplumber.open(PDF_PATH) as pdf:
+            for page_number, page in enumerate(pdf.pages, start=1):
+                # Extract text
+                pdf_content["text"] += f"Page {page_number}:\n"
+                pdf_content["text"] += page.extract_text() or "No text found\n"
+
+                # Extract images
+                for img in page.images:
+                    # Coordinates of the image in the PDF
+                    x0, y0, x1, y1 = img["x0"], img["y0"], img["x1"], img["y1"]
+                    # Cropping image from the PDF
+                    cropped_image = page.within_bbox((x0, y0, x1, y1)).to_image()
+                    pil_image = cropped_image.original  # PIL image object
+                    base64_image = image_to_base64(pil_image)  # Convert to base64
+                    pdf_content["images"].append({
+                        "page_number": page_number,
+                        "image_data": base64_image
+                    })
+
+        return JSONResponse(content={"pdf_content": pdf_content}, status_code=200)
+    except Exception as e:
+        print(f"Failed to read PDF: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read PDF content")
