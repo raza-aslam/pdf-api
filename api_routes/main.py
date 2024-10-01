@@ -7,9 +7,11 @@ from email.utils import formataddr
 from pathlib import Path
 from Database.db import create_tables
 from Database.setting import DB_SESSION, sendername, senderemail, SMTP_PASSWORD
-from api_routes.pdf_data import page_data
-
-
+import fitz #type: ignore
+import pytesseract #type: ignore
+from PIL import Image
+import io
+import base64
 
 
 
@@ -82,7 +84,48 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
 def get_emails(session: DB_SESSION):
     return session.exec(select(User)).all()  # Retrieve all users
 
-@app.get("/get-data/")
-def get_all_page_data():
-    # Return all page data directly without filtering
-    return JSONResponse(content=page_data)
+
+# Route to read and return the PDF content
+@app.get("/read-pdf/", response_class=JSONResponse)
+async def read_pdf_with_ocr():
+    # Check if the PDF file exists
+    if not PDF_PATH.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+    
+    try:
+        # Open the PDF with PyMuPDF (fitz)
+        doc = fitz.open(str(PDF_PATH))
+        extracted_text = ""
+        images = []  # List to store base64 encoded images
+        
+        # Iterate over PDF pages
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)  # Load the page
+            pix = page.get_pixmap()  # Render the page as an image
+            
+            # Convert the image to a base64 string
+            img_bytes = pix.tobytes("png")
+            base64_img = base64.b64encode(img_bytes).decode('utf-8')
+            images.append(base64_img)  # Append the base64 image to the list
+            
+            # Convert the image to PIL format and extract text using pytesseract
+            img = Image.open(io.BytesIO(img_bytes))
+            text = pytesseract.image_to_string(img)
+            extracted_text += f"Page {page_num + 1}:\n{text}\n\n"
+        
+        # If no text is found, we notify the user
+        if not extracted_text.strip():
+            extracted_text = "[No extractable text found in the PDF]"
+        
+        # Return the extracted text and images
+        return {"pdf_content": extracted_text, "images": images}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read PDF with OCR: {e}")
+
+
+# @app.get("/read-pdf/", response_class=FileResponse)
+# async def read_pdf():
+#     if not PDF_PATH.exists():
+#         raise HTTPException(status_code=404, detail="PDF file not found.")
+#     return FileResponse(PDF_PATH, media_type='application/pdf', filename=PDF_PATH.name)
