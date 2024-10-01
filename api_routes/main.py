@@ -27,7 +27,7 @@ class User(SQLModel, table=True):
 app = FastAPI(lifespan = create_tables)
 
 # Static PDF File Path (replace with your actual path)
-PDF_PATH = Path(__file__).parent / "pdfs" / "book.pdf"  # Use Path for PDF path
+PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Use Path for PDF path
  # Ensure this is correct
 
 # Static sender information
@@ -86,42 +86,102 @@ def get_emails(session: DB_SESSION):
 
 
 # Route to read and return the PDF content
+# @app.get("/read-pdf/", response_class=JSONResponse)
+# async def read_pdf_with_ocr():
+#     # Check if the PDF file exists
+#     if not PDF_PATH.exists():
+#         raise HTTPException(status_code=404, detail="PDF file not found.")
+    
+#     try:
+#         # Open the PDF with PyMuPDF (fitz)
+#         doc = fitz.open(str(PDF_PATH))
+#         extracted_text = ""
+#         images = []  # List to store base64 encoded images
+        
+#         # Iterate over PDF pages
+#         for page_num in range(len(doc)):
+#             page = doc.load_page(page_num)  # Load the page
+#             pix = page.get_pixmap()  # Render the page as an image
+            
+#             # Convert the image to a base64 string
+#             img_bytes = pix.tobytes("png")
+#             base64_img = base64.b64encode(img_bytes).decode('utf-8')
+#             images.append(base64_img)  # Append the base64 image to the list
+            
+#             # Convert the image to PIL format and extract text using pytesseract
+#             img = Image.open(io.BytesIO(img_bytes))
+#             text = pytesseract.image_to_string(img)
+#             extracted_text += f"Page {page_num + 1}:\n{text}\n\n"
+        
+#         # If no text is found, we notify the user
+#         if not extracted_text.strip():
+#             extracted_text = "[No extractable text found in the PDF]"
+        
+#         # Return the extracted text and images
+#         return {"pdf_content": extracted_text, "images": images}
+    
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Failed to read PDF with OCR: {e}")
+
+
 @app.get("/read-pdf/", response_class=JSONResponse)
-async def read_pdf_with_ocr():
+async def read_pdf():
     # Check if the PDF file exists
     if not PDF_PATH.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
-    
+
     try:
-        # Open the PDF with PyMuPDF (fitz)
+        # Open the PDF file with PyMuPDF (fitz)
         doc = fitz.open(str(PDF_PATH))
-        extracted_text = ""
-        images = []  # List to store base64 encoded images
-        
-        # Iterate over PDF pages
+        page_content = []
+
+        # Iterate over PDF pages and extract text and images
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)  # Load the page
-            pix = page.get_pixmap()  # Render the page as an image
             
-            # Convert the image to a base64 string
-            img_bytes = pix.tobytes("png")
-            base64_img = base64.b64encode(img_bytes).decode('utf-8')
-            images.append(base64_img)  # Append the base64 image to the list
-            
-            # Convert the image to PIL format and extract text using pytesseract
-            img = Image.open(io.BytesIO(img_bytes))
-            text = pytesseract.image_to_string(img)
-            extracted_text += f"Page {page_num + 1}:\n{text}\n\n"
-        
-        # If no text is found, we notify the user
-        if not extracted_text.strip():
-            extracted_text = "[No extractable text found in the PDF]"
-        
-        # Return the extracted text and images
-        return {"pdf_content": extracted_text, "images": images}
-    
+            # Extract text from the page
+            text = page.get_text("text").strip()
+
+            # If the default method doesn't work, try extracting blocks of text (list of blocks)
+            if not text:
+                blocks = page.get_text("blocks")
+                text = "\n".join([block[4] for block in blocks if block[4].strip()])
+
+            # If still no text, try extracting individual words (list of words)
+            if not text:
+                words = page.get_text("words")
+                text = " ".join([word[4] for word in words])
+
+            # If still no text, notify the user
+            if not text.strip():
+                text = "[No extractable text found on this page]"
+
+            # Initialize the page content with text
+            page_data = {
+                "page_number": page_num + 1,
+                "text": text,
+                "images": []
+            }
+
+            # Extract images from the page
+            for img_index, img in enumerate(page.get_images(full=True)):
+                xref = img[0]  # Extract the xref of the image
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')  # Encode image to base64
+                page_data["images"].append({
+                    "image_index": img_index, 
+                    "image_base64": image_base64
+                })
+
+            # Append the page content (text + images) to the list
+            page_content.append(page_data)
+
+        # Return the extracted text and images grouped by page
+        return {"pages": page_content}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read PDF with OCR: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
 
 
 # @app.get("/read-pdf/", response_class=FileResponse)
