@@ -124,6 +124,70 @@ def get_emails(session: DB_SESSION):
 #         raise HTTPException(status_code=500, detail=f"Failed to read PDF with OCR: {e}")
 
 
+# @app.get("/read-pdf-step/", response_class=JSONResponse)
+# async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
+#     # Check if the PDF file exists
+#     if not PDF_PATH.exists():
+#         raise HTTPException(status_code=404, detail="PDF file not found.")
+
+#     try:
+#         # Open the PDF file with PyMuPDF (fitz)
+#         doc = fitz.open(str(PDF_PATH))
+#         total_pages = len(doc)
+
+#         # Check if the page number is valid
+#         if page_num < 1 or page_num > total_pages:
+#             raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
+
+#         # Load the specified page
+#         page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
+
+#         # Extract text from the page
+#         text = page.get_text("text").strip()
+
+#         # If the default method doesn't work, try extracting blocks of text (list of blocks)
+#         if not text:
+#             blocks = page.get_text("blocks")
+#             text = "\n".join([block[4] for block in blocks if block[4].strip()])
+
+#         # If still no text, try extracting individual words (list of words)
+#         if not text:
+#             words = page.get_text("words")
+#             text = " ".join([word[4] for word in words])
+
+#         # If still no text, notify the user
+#         if not text.strip():
+#             text = "[No extractable text found on this page]"
+
+#         # Extract images from the page
+#         images = []
+#         for img_index, img in enumerate(page.get_images(full=True)):
+#             xref = img[0]  # Extract the xref of the image
+#             base_image = doc.extract_image(xref)
+#             image_bytes = base_image["image"]
+#             image_base64 = base64.b64encode(image_bytes).decode('utf-8')  # Encode image to base64
+#             images.append({
+#                 "image_index": img_index, 
+#                 "image_base64": image_base64
+#             })
+
+#         # Return the extracted text and images for the current page
+#         response = {
+#             "page_number": page_num,
+#             "total_pages": total_pages,
+#             "text": text,
+#             "images": images
+#         }
+
+#         # Add a message prompting the user if they want to read the next page
+#         response["message"] = f"Do you want to read the next page? The PDF has {total_pages} pages in total."
+
+#         return response
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
+
 @app.get("/read-pdf-step/", response_class=JSONResponse)
 async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
     # Check if the PDF file exists
@@ -159,24 +223,11 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
         if not text.strip():
             text = "[No extractable text found on this page]"
 
-        # Extract images from the page
-        images = []
-        for img_index, img in enumerate(page.get_images(full=True)):
-            xref = img[0]  # Extract the xref of the image
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            image_base64 = base64.b64encode(image_bytes).decode('utf-8')  # Encode image to base64
-            images.append({
-                "image_index": img_index, 
-                "image_base64": image_base64
-            })
-
-        # Return the extracted text and images for the current page
+        # Return the extracted text for the current page
         response = {
             "page_number": page_num,
             "total_pages": total_pages,
-            "text": text,
-            "images": images
+            "text": text
         }
 
         # Add a message prompting the user if they want to read the next page
