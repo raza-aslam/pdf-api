@@ -12,7 +12,7 @@ import fitz #type: ignore
 
 from fastapi import FastAPI, HTTPException, Query
 from sqlmodel import SQLModel, Field, select
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -35,7 +35,8 @@ app = FastAPI(lifespan = create_tables)
 
 
 PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Path to the PDF
-
+IMAGE_DIR = Path(__file__).parent / "temp_images"
+IMAGE_DIR.mkdir(exist_ok=True)  # Create the directory if it doesn't exist
 in_memory_images = {}
 
 
@@ -116,7 +117,7 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
         # Extract text from the page
         text = page.get_text("text").strip()
 
-        # Extract original quality images from the page and encode them to base64
+        # Extract images from the page and save them temporarily as files
         images = []
         image_list = page.get_images(full=True)
         if image_list:
@@ -124,14 +125,18 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
+                image_extension = base_image["ext"]
 
-                # Convert image bytes to base64 without resizing or compressing
+                # Generate a unique filename for the image
+                image_filename = f"{uuid.uuid4()}.{image_extension}"
+                image_path = IMAGE_DIR / image_filename
+
+                # Save the image to disk using Pillow
                 try:
-                    # Encode the image as base64 for the response
-                    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-
-                    # Append the base64 image to the list in data URI format
-                    images.append(f"data:image/{base_image['ext']};base64,{image_base64}")
+                    image = Image.open(BytesIO(image_bytes))
+                    image.save(image_path)
+                    # Append the short URL for the image
+                    images.append(f"/get-image/{image_filename}")
                 except Exception as e:
                     print(f"Failed to process image: {e}")
                     continue
@@ -158,6 +163,19 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
+
+@app.get("/get-image/{image_filename}")
+async def get_image(image_filename: str):
+    # Generate the full image path
+    image_path = IMAGE_DIR / image_filename
+
+    # Check if the image exists
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    # Return the image as a file response
+    return FileResponse(image_path)
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
