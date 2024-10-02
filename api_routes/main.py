@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 import base64
 import uuid
@@ -7,6 +8,8 @@ import pdfplumber
 from PIL import Image
 from pdfminer.high_level import extract_text
 import fitz #type: ignore
+=======
+>>>>>>> e0b1edd7f11f5617799aca94d4c113234e3f64fc
 from fastapi import FastAPI, HTTPException, Query
 from sqlmodel import SQLModel, Field, select
 from fastapi.responses import JSONResponse
@@ -16,8 +19,17 @@ from email.utils import formataddr
 from pathlib import Path
 from Database.db import create_tables
 from Database.setting import DB_SESSION, sendername, senderemail, SMTP_PASSWORD
+<<<<<<< HEAD
 from io import BytesIO
 import base64
+=======
+import fitz #type: ignore
+import pytesseract #type: ignore
+from PIL import Image
+import io
+import base64
+
+>>>>>>> e0b1edd7f11f5617799aca94d4c113234e3f64fc
 
 
 class User(SQLModel, table=True):
@@ -32,10 +44,14 @@ class User(SQLModel, table=True):
 app = FastAPI(lifespan = create_tables)
 
 # Static PDF File Path (replace with your actual path)
+<<<<<<< HEAD
 PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Path to the PDF
 
 in_memory_images = {}
 
+=======
+PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Use Path for PDF path
+>>>>>>> e0b1edd7f11f5617799aca94d4c113234e3f64fc
  # Ensure this is correct
 
 # Static sender information
@@ -167,6 +183,7 @@ def get_emails(session: DB_SESSION):
     return session.exec(select(User)).all()  # Retrieve all users
 
 
+<<<<<<< HEAD
 # @app.get("/read-pdf-step/", response_class=JSONResponse)
 # async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
 #     # Check if the PDF file exists
@@ -200,6 +217,8 @@ def get_emails(session: DB_SESSION):
 #         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
 
 
+=======
+>>>>>>> e0b1edd7f11f5617799aca94d4c113234e3f64fc
 # Route to read and return the PDF content
 # @app.get("/read-pdf/", response_class=JSONResponse)
 # async def read_pdf_with_ocr():
@@ -303,6 +322,60 @@ def get_emails(session: DB_SESSION):
 #         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
 
 
+<<<<<<< HEAD
+=======
+@app.get("/read-pdf-step/", response_class=JSONResponse)
+async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
+    # Check if the PDF file exists
+    if not PDF_PATH.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+
+    try:
+        # Open the PDF file with PyMuPDF (fitz)
+        doc = fitz.open(str(PDF_PATH))
+        total_pages = len(doc)
+
+        # Check if the page number is valid
+        if page_num < 1 or page_num > total_pages:
+            raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
+
+        # Load the specified page
+        page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
+
+        # Extract text from the page
+        text = page.get_text("text").strip()
+
+        # If the default method doesn't work, try extracting blocks of text (list of blocks)
+        if not text:
+            blocks = page.get_text("blocks")
+            text = "\n".join([block[4] for block in blocks if block[4].strip()])
+
+        # If still no text, try extracting individual words (list of words)
+        if not text:
+            words = page.get_text("words")
+            text = " ".join([word[4] for word in words])
+
+        # If still no text, notify the user
+        if not text.strip():
+            text = "[No extractable text found on this page]"
+
+        # Return the extracted text for the current page
+        response = {
+            "page_number": page_num,
+            "total_pages": total_pages,
+            "text": text
+        }
+
+        # Add a message prompting the user if they want to read the next page
+        response["message"] = f"Do you want to read the next page? The PDF has {total_pages} pages in total."
+
+        return response
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
+
+>>>>>>> e0b1edd7f11f5617799aca94d4c113234e3f64fc
 # @app.get("/read-pdf/", response_class=FileResponse)
 # async def read_pdf():
 #     if not PDF_PATH.exists():
