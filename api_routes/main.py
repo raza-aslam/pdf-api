@@ -12,7 +12,7 @@ import fitz #type: ignore
 
 from fastapi import FastAPI, HTTPException, Query
 from sqlmodel import SQLModel, Field, select
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -35,8 +35,7 @@ app = FastAPI(lifespan = create_tables)
 
 
 PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Path to the PDF
-IMAGE_DIR = Path(__file__).parent / "temp_images"
-IMAGE_DIR.mkdir(exist_ok=True)  # Create the directory if it doesn't exist
+
 in_memory_images = {}
 
 
@@ -96,11 +95,16 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
 
-@app.get("/read-pdf-step/")
+
+@app.get("/read-pdf-step/", response_class=JSONResponse)
 async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
+    # Check if the PDF file exists
+    if not PDF_PATH.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+
     try:
-        # Open the PDF
-        doc = fitz.open(PDF_PATH)
+        # Open the PDF file with PyMuPDF (fitz)
+        doc = fitz.open(str(PDF_PATH))
         total_pages = len(doc)
 
         # Check if the page number is valid
@@ -108,49 +112,69 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
             raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
 
         # Load the specified page
-        page = doc.load_page(page_num - 1)
+        page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
 
-        # Extract text
+        # Extract text from the page
         text = page.get_text("text").strip()
 
-        # Extract images and convert to manageable format
+        # Extract images from the page
         images = []
         image_list = page.get_images(full=True)
-
         if image_list:
             for img in image_list:
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
-                
-                # Convert the image to PNG using PIL for smaller base64 strings
-                image = Image.open(BytesIO(image_bytes))
-                image_io = BytesIO()
-                image.save(image_io, format="PNG")
-                image_io.seek(0)
+                image_extension = base_image["ext"]
 
-                # Encode image as base64 (optimized to be shorter)
-                image_base64 = base64.b64encode(image_io.getvalue()).decode("utf-8")
+                # Create an in-memory stream for the image
+                image_io = BytesIO(image_bytes)
 
-                # Append smaller base64 string of the image
-                images.append(f"data:image/png;base64,{image_base64[:200]}...")  # Truncate for optimization
+                # Generate a unique ID for the image
+                image_id = str(uuid.uuid4())
 
-        # If no text and no images, return a message
+                # Store the in-memory image with the ID
+                in_memory_images[image_id] = {
+                    "image_io": image_io,
+                    "extension": image_extension
+                }
+
+                # Append the short path to the images list
+                images.append(f"/get-image/{image_id}")
+
+        # If no text and no images, notify the user
         if not text.strip() and not images:
             text = "[No extractable text or images found on this page]"
 
-        # Prepare the response data
-        response_data = {
+        # Prepare the response
+        response = {
             "page_number": page_num,
             "total_pages": total_pages,
             "text": text if text.strip() else None,
             "images": images if images else None
         }
-
-        return JSONResponse(content=response_data)
+        if page_num < total_pages:
+            response["message"] = f"Page {page_num} of {total_pages}. Would you like to proceed to the next page?"
+        else:
+            response["message"] = f"Page {page_num} of {total_pages}. This is the last page."
+        return response
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
+# Endpoint to serve images
+@app.get("/get-image/{image_id}")
+async def get_image(image_id: str):
+    if image_id not in in_memory_images:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    image_info = in_memory_images[image_id]
+    image_io = image_info["image_io"]
+    image_io.seek(0)  # Reset the stream to the beginning
+
+    return StreamingResponse(image_io, media_type=f"image/{image_info['extension']}")
+
+  
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
