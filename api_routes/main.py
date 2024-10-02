@@ -12,7 +12,7 @@ import fitz #type: ignore
 
 from fastapi import FastAPI, HTTPException, Query
 from sqlmodel import SQLModel, Field, select
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -96,74 +96,61 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
 
-@app.get("/read-pdf-step/", response_class=JSONResponse)
+@app.get("/read-pdf-step/")
 async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
     try:
-        # Open the PDF file
+        # Open the PDF
         doc = fitz.open(PDF_PATH)
         total_pages = len(doc)
 
+        # Check if the page number is valid
         if page_num < 1 or page_num > total_pages:
             raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
 
+        # Load the specified page
         page = doc.load_page(page_num - 1)
-        
-        # Extract text from the page
+
+        # Extract text
         text = page.get_text("text").strip()
 
-        # Extract images from the page
-        image_urls = []
+        # Extract images and convert to manageable format
+        images = []
         image_list = page.get_images(full=True)
-        
-        if image_list:
-            for img_index, img in enumerate(image_list):
-                # Generate a URL to fetch each image
-                image_url = f"/image/{page_num}/{img_index}"
-                image_urls.append(image_url)
 
-        # Prepare the response
-        response = {
+        if image_list:
+            for img in image_list:
+                xref = img[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+                
+                # Convert the image to PNG using PIL for smaller base64 strings
+                image = Image.open(BytesIO(image_bytes))
+                image_io = BytesIO()
+                image.save(image_io, format="PNG")
+                image_io.seek(0)
+
+                # Encode image as base64 (optimized to be shorter)
+                image_base64 = base64.b64encode(image_io.getvalue()).decode("utf-8")
+
+                # Append smaller base64 string of the image
+                images.append(f"data:image/png;base64,{image_base64[:200]}...")  # Truncate for optimization
+
+        # If no text and no images, return a message
+        if not text.strip() and not images:
+            text = "[No extractable text or images found on this page]"
+
+        # Prepare the response data
+        response_data = {
             "page_number": page_num,
             "total_pages": total_pages,
-            "text": text if text else "[No text found on this page]",
-            "images": image_urls
+            "text": text if text.strip() else None,
+            "images": images if images else None
         }
 
-        return response
+        return JSONResponse(content=response_data)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {str(e)}")
-
-
-@app.get("/image/{page_num}/{img_index}")
-async def get_image(page_num: int, img_index: int):
-    try:
-        # Open the PDF file
-        doc = fitz.open(PDF_PATH)
-        page = doc.load_page(page_num - 1)
-
-        # Extract the image based on the index
-        image_list = page.get_images(full=True)
-        
-        if img_index < 0 or img_index >= len(image_list):
-            raise HTTPException(status_code=404, detail="Image not found")
-
-        img = image_list[img_index]
-        xref = img[0]
-        base_image = doc.extract_image(xref)
-        image_bytes = base_image["image"]
-
-        # Use Pillow to handle the image in-memory
-        image = Image.open(BytesIO(image_bytes))
-        img_io = BytesIO()
-        image.save(img_io, format="PNG")
-        img_io.seek(0)
-
-        # Serve the image directly as a response
-        return StreamingResponse(img_io, media_type="image/png")
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
