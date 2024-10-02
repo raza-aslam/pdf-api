@@ -95,7 +95,6 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
 
-
 @app.get("/read-pdf-step/", response_class=JSONResponse)
 async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
     # Check if the PDF file exists
@@ -117,7 +116,7 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
         # Extract text from the page
         text = page.get_text("text").strip()
 
-        # Extract images from the page
+        # Extract original quality images from the page and encode them to base64
         images = []
         image_list = page.get_images(full=True)
         if image_list:
@@ -125,22 +124,17 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
-                image_extension = base_image["ext"]
 
-                # Create an in-memory stream for the image
-                image_io = BytesIO(image_bytes)
+                # Convert image bytes to base64 without resizing or compressing
+                try:
+                    # Encode the image as base64 for the response
+                    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-                # Generate a unique ID for the image
-                image_id = str(uuid.uuid4())
-
-                # Store the in-memory image with the ID
-                in_memory_images[image_id] = {
-                    "image_io": image_io,
-                    "extension": image_extension
-                }
-
-                # Append the short path to the images list
-                images.append(f"/get-image/{image_id}")
+                    # Append the base64 image to the list in data URI format
+                    images.append(f"data:image/{base_image['ext']};base64,{image_base64}")
+                except Exception as e:
+                    print(f"Failed to process image: {e}")
+                    continue
 
         # If no text and no images, notify the user
         if not text.strip() and not images:
@@ -151,19 +145,19 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
             "page_number": page_num,
             "total_pages": total_pages,
             "text": text if text.strip() else None,
-            "images": images if images else None,
-            "message": "Would you like to pr"
+            "images": images if images else None
         }
+
+        # Add a prompt message for proceeding to the next page
         if page_num < total_pages:
             response["message"] = f"Page {page_num} of {total_pages}. Would you like to proceed to the next page?"
         else:
             response["message"] = f"Page {page_num} of {total_pages}. This is the last page."
+
         return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
-
-  
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
