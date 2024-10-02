@@ -117,7 +117,7 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
         # Extract text from the page
         text = page.get_text("text").strip()
 
-        # Extract images from the page and save them temporarily as files
+        # Extract and process images from the page
         images = []
         image_list = page.get_images(full=True)
         if image_list:
@@ -125,18 +125,25 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
-                image_extension = base_image["ext"]
 
-                # Generate a unique filename for the image
-                image_filename = f"{uuid.uuid4()}.{image_extension}"
-                image_path = IMAGE_DIR / image_filename
-
-                # Save the image to disk using Pillow
+                # Convert the image to base64 after resizing and compressing it
                 try:
                     image = Image.open(BytesIO(image_bytes))
-                    image.save(image_path)
-                    # Append the short URL for the image
-                    images.append(f"/get-image/{image_filename}")
+
+                    # Resize the image to a very small size (e.g., 75x75 pixels)
+                    max_size = (75, 75)
+                    image.thumbnail(max_size)
+
+                    # Compress the image and save it as JPEG to a BytesIO object
+                    image_io = BytesIO()
+                    image.save(image_io, format="JPEG", optimize=True, quality=50)
+                    image_io.seek(0)
+
+                    # Encode the image as base64 for the response
+                    image_base64 = base64.b64encode(image_io.getvalue()).decode('utf-8')
+
+                    # Append the base64 image to the list in data URI format
+                    images.append(f"data:image/jpeg;base64,{image_base64}")
                 except Exception as e:
                     print(f"Failed to process image: {e}")
                     continue
@@ -163,19 +170,6 @@ async def read_pdf_step(page_num: int = Query(1, description="Page number to rea
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
-
-
-@app.get("/get-image/{image_filename}")
-async def get_image(image_filename: str):
-    # Generate the full image path
-    image_path = IMAGE_DIR / image_filename
-
-    # Check if the image exists
-    if not image_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found.")
-
-    # Return the image as a file response
-    return FileResponse(image_path)
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
