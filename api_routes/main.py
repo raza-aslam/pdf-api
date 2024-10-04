@@ -93,59 +93,69 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
         return JSONResponse(content={"message": f"PDF file sent successfully to {email}"}, status_code=200)
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
-
-@app.get("/read-pdf-step/", response_class=JSONResponse)
-async def read_pdf_step(request: Request, page_num: int = Query(1, description="Page number to read")):
+@app.get("/read-pdf-steps/", response_class=JSONResponse)
+async def search_pdf(request: Request, keyword: str | None = None, page_num: int | None = None):
     # Check if the PDF file exists
     if not PDF_PATH.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
-
+    
     try:
-        # Open the PDF with PyMuPDF (Fitz) to determine the total number of pages
+        # Open the PDF with PyMuPDF (Fitz)
         doc = fitz.open(PDF_PATH)
         total_pages = len(doc)
+        response_data = {"total_pages": total_pages}
 
-        # Check if the requested page number is valid
-        if page_num < 1 or page_num > total_pages:
-            raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
+        # If both keyword and page number are provided, raise an error
+        if keyword and page_num:
+            raise HTTPException(status_code=400, detail="Please provide either a keyword or a page number, not both.")
 
-        # Prepare the response data
-        response_data = {
-            "page_number": page_num,
-            "total_pages": total_pages
-        }
+        # If page number is provided, return the page data
+        if page_num:
+            if page_num < 1 or page_num > total_pages:
+                raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
+            
+            page = doc.load_page(page_num - 1)  # PyMuPDF is zero-indexed
+            response_data["page_number"] = page_num
+            response_data["text"] = page.get_text("text").strip()
 
-        # Use a fixed image ID based on the page number
-        image_id = f"page-{page_num}"
+            # Render the page as an image
+            image_id = f"page-{page_num}"
+            if image_id not in in_memory_images:
+                pix = page.get_pixmap()  # Render the page to an image
+                img_io = BytesIO(pix.tobytes("png"))  # Convert image to bytes
+                img_io.seek(0)
+                in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
 
-        # Check if the image is already in memory; if not, create and store it
-        if image_id not in in_memory_images:
-            # Render the page as an image using PyMuPDF
-            page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
-            pix = page.get_pixmap()  # Render the page to an image
-            img_io = BytesIO(pix.tobytes("png"))  # Convert image to bytes
-            img_io.seek(0)
+            image_url: str = f"{request.base_url}get-image/{image_id}"
+            response_data["image_url"] = image_url
+            
+            return JSONResponse(content=response_data, status_code=200)
 
-            # Store the image in memory with the fixed image_id
-            in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
+        # If keyword is provided, search through the PDF
+        elif keyword:
+            matches = []
+            for page_num in range(total_pages):
+                page = doc.load_page(page_num)
+                text = page.get_text("text")
+                
+                if keyword.lower() in text.lower():  # Case-insensitive search
+                    matches.append({
+                        "page_number": page_num + 1,
+                        "text_snippet": text.strip()[:200]
+                    })
 
-        # Generate the image URL for the response
-        image_url: str = f"{request.base_url}get-image/{image_id}"
-        response_data["image_url"] = image_url
+            if not matches:
+                return JSONResponse(content={"message": f"No matches found for keyword '{keyword}'"}, status_code=404)
+            
+            response_data["matches"] = matches
+            response_data["total_matches"] = len(matches)
+            return JSONResponse(content=response_data, status_code=200)
 
-        # Extract text from the page using PyMuPDF, but skip text extraction for page 3
-        if page_num != 3:
-            page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
-            text = page.get_text("text").strip()
-
-            # Include text only if it's not empty
-            if text:
-                response_data["text"] = text
-
-        return JSONResponse(content=response_data, status_code=200)
-
+        else:
+            raise HTTPException(status_code=400, detail="Please provide either a keyword or a page number.")
+    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process request: {e}")
 
 
 # Endpoint to retrieve images by their unique ID
