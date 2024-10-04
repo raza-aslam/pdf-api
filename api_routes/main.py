@@ -93,71 +93,36 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
         return JSONResponse(content={"message": f"PDF file sent successfully to {email}"}, status_code=200)
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
-@app.get("/read-pdf-steps/", response_class=JSONResponse)
-async def read_pdf_steps(request: Request, page_num: int | None = None, keyword: str | None = None):
+@app.get("/search-pdf-keyword/", response_class=JSONResponse)
+async def search_pdf_keyword(keyword: str):
     # Check if the PDF file exists
     if not PDF_PATH.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
-
+    
     try:
         # Open the PDF with PyMuPDF (Fitz)
         doc = fitz.open(PDF_PATH)
         total_pages = len(doc)
-        response_data = {"total_pages": total_pages}
+        matches = []
 
-        # Handle both page number and keyword, but not both at the same time
-        if page_num and keyword:
-            raise HTTPException(status_code=400, detail="Please provide either a keyword or a page number, not both.")
-
-        # If page number is provided
-        if page_num:
-            if page_num < 1 or page_num > total_pages:
-                raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
+        # Iterate through all the pages and search for the keyword
+        for page_num in range(total_pages):
+            page = doc.load_page(page_num)  # Load the page
+            text = page.get_text("text")
             
-            page = doc.load_page(page_num - 1)  # PyMuPDF is zero-indexed
-            response_data["page_number"] = page_num
-            response_data["text"] = page.get_text("text").strip()
+            if keyword.lower() in text.lower():  # Case-insensitive search
+                matches.append({
+                    "page_number": page_num + 1,  # Store 1-based index for page numbers
+                    "text_snippet": text.strip()[:200]  # Provide a snippet of the text
+                })
 
-            # Render the page as an image
-            image_id = f"page-{page_num}"
-            if image_id not in in_memory_images:
-                pix = page.get_pixmap()  # Render the page to an image
-                img_io = BytesIO(pix.tobytes("png"))  # Convert image to bytes
-                img_io.seek(0)
-                in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
+        if not matches:
+            return JSONResponse(content={"message": f"No matches found for keyword '{keyword}'"}, status_code=404)
+        
+        return JSONResponse(content={"matches": matches, "total_matches": len(matches)}, status_code=200)
 
-            image_url: str = f"{request.base_url}get-image/{image_id}"
-            response_data["image_url"] = image_url
-
-            return JSONResponse(content=response_data, status_code=200)
-
-        # If keyword is provided
-        elif keyword:
-            matches = []
-            for page_num in range(total_pages):
-                page = doc.load_page(page_num)
-                text = page.get_text("text")
-                
-                if keyword.lower() in text.lower():  # Case-insensitive search
-                    matches.append({
-                        "page_number": page_num + 1,
-                        "text_snippet": text.strip()[:200]
-                    })
-
-            if not matches:
-                return JSONResponse(content={"message": f"No matches found for keyword '{keyword}'"}, status_code=404)
-
-            response_data["matches"] = matches
-            response_data["total_matches"] = len(matches)
-            return JSONResponse(content=response_data, status_code=200)
-
-        else:
-            raise HTTPException(status_code=400, detail="Please provide either a keyword or a page number.")
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process request: {e}")
-
-
+        raise HTTPException(status_code=500, detail=f"Failed to search PDF: {e}")
 
 # Endpoint to retrieve images by their unique ID
 @app.get("/get-image/{image_id}")
