@@ -94,22 +94,22 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
 @app.get("/read-pdf-steps/", response_class=JSONResponse)
-async def search_pdf(request: Request, keyword: str | None = None, page_num: int | None = None):
+async def read_pdf_steps(request: Request, page_num: int | None = None, keyword: str | None = None):
     # Check if the PDF file exists
     if not PDF_PATH.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
-    
+
     try:
         # Open the PDF with PyMuPDF (Fitz)
         doc = fitz.open(PDF_PATH)
         total_pages = len(doc)
         response_data = {"total_pages": total_pages}
 
-        # If both keyword and page number are provided, raise an error
-        if keyword and page_num:
+        # Handle both page number and keyword, but not both at the same time
+        if page_num and keyword:
             raise HTTPException(status_code=400, detail="Please provide either a keyword or a page number, not both.")
 
-        # If page number is provided, return the page data
+        # If page number is provided
         if page_num:
             if page_num < 1 or page_num > total_pages:
                 raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
@@ -128,10 +128,10 @@ async def search_pdf(request: Request, keyword: str | None = None, page_num: int
 
             image_url: str = f"{request.base_url}get-image/{image_id}"
             response_data["image_url"] = image_url
-            
+
             return JSONResponse(content=response_data, status_code=200)
 
-        # If keyword is provided, search through the PDF
+        # If keyword is provided
         elif keyword:
             matches = []
             for page_num in range(total_pages):
@@ -146,7 +146,7 @@ async def search_pdf(request: Request, keyword: str | None = None, page_num: int
 
             if not matches:
                 return JSONResponse(content={"message": f"No matches found for keyword '{keyword}'"}, status_code=404)
-            
+
             response_data["matches"] = matches
             response_data["total_matches"] = len(matches)
             return JSONResponse(content=response_data, status_code=200)
@@ -156,6 +156,7 @@ async def search_pdf(request: Request, keyword: str | None = None, page_num: int
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process request: {e}")
+
 
 
 # Endpoint to retrieve images by their unique ID
