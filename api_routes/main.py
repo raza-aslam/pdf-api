@@ -93,16 +93,17 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
         return JSONResponse(content={"message": f"PDF file sent successfully to {email}"}, status_code=200)
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
-@app.get("/search-pdf-keyword/", response_class=JSONResponse)
-async def search_pdf_keyword(request: Request, keyword: str):
+@app.get("/read-pdf-steps/", response_class=JSONResponse)
+async def read_pdf_steps(request: Request, keyword: str):
     # Check karein ke PDF file mojood hai ya nahi
     if not PDF_PATH.exists():
         raise HTTPException(status_code=404, detail="PDF file nahi mili.")
-    
+
     try:
         # PDF ko open karein using PyMuPDF (Fitz)
         doc = fitz.open(PDF_PATH)
         total_pages = len(doc)
+        response_data = {"total_pages": total_pages}
         matches = []
 
         # Har page par keyword ko search karein
@@ -125,17 +126,23 @@ async def search_pdf_keyword(request: Request, keyword: str):
                     img_io.seek(0)
                     in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
 
+                # Add image URL for the match
+                matches[-1]["image_url"] = f"{request.base_url}get-image/{image_id}"
+
         if not matches:
             return JSONResponse(content={"message": f"Keyword '{keyword}' ke liye koi matches nahi mile."}, status_code=404)
-        
-        return JSONResponse(content={"matches": matches, "total_matches": len(matches)}, status_code=200)
+
+        response_data["matches"] = matches
+        response_data["total_matches"] = len(matches)
+        return JSONResponse(content=response_data, status_code=200)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF ko search karne mein error: {e}")
 
 
+
 # Endpoint to retrieve images by their unique ID
-# Image ko unique ID ke zariye retrieve karne ka endpoint
+# # Image ko unique ID ke zariye retrieve karne ka endpoint
 @app.get("/get-image/{image_id}")
 async def get_image(image_id: str):
     image_info = in_memory_images.get(image_id)
