@@ -11,7 +11,7 @@ from email.utils import formataddr
 from pathlib import Path
 from Database.db import create_tables
 from Database.setting import DB_SESSION, sendername, senderemail, SMTP_PASSWORD
-
+from fastapi.middleware.cors import CORSMiddleware
 
 
 class User(SQLModel, table=True):
@@ -25,6 +25,13 @@ class User(SQLModel, table=True):
 # FastAPI app
 app = FastAPI(lifespan = create_tables)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://pdf-api-production-2f82.up.railway.app/"],  # Adjust this to your frontend's domain for better security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Path to the PDF
 
