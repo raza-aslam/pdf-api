@@ -90,7 +90,7 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
 @app.get("/read-pdf-step/", response_class=JSONResponse)
 async def read_pdf_step(request: Request, page_num: int = Query(1, description="Page number to read")):
     # Check if the PDF file exists
-    if not os.path.exists(PDF_PATH):
+    if not PDF_PATH.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
 
     try:
@@ -108,15 +108,19 @@ async def read_pdf_step(request: Request, page_num: int = Query(1, description="
             "total_pages": total_pages
         }
 
-        # Render the page as an image using PyMuPDF
-        page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
-        pix = page.get_pixmap()  # Render the page to an image
-        img_io = BytesIO(pix.tobytes("png"))  # Convert image to bytes
-        img_io.seek(0)
+        # Use a fixed image ID based on the page number
+        image_id = f"page-{page_num}"
 
-        # Generate a unique ID for the image and store it
-        image_id = str(uuid.uuid4())
-        in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
+        # Check if the image is already in memory; if not, create and store it
+        if image_id not in in_memory_images:
+            # Render the page as an image using PyMuPDF
+            page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
+            pix = page.get_pixmap()  # Render the page to an image
+            img_io = BytesIO(pix.tobytes("png"))  # Convert image to bytes
+            img_io.seek(0)
+
+            # Store the image in memory with the fixed image_id
+            in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
 
         # Generate the image URL for the response
         image_url: str = f"{request.base_url}get-image/{image_id}"
@@ -124,6 +128,7 @@ async def read_pdf_step(request: Request, page_num: int = Query(1, description="
 
         # Extract text from the page using PyMuPDF, but skip text extraction for page 3
         if page_num != 3:
+            page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
             text = page.get_text("text").strip()
 
             # Include text only if it's not empty
@@ -134,6 +139,7 @@ async def read_pdf_step(request: Request, page_num: int = Query(1, description="
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
 
 # Endpoint to retrieve images by their unique ID
 @app.get("/get-image/{image_id}")
@@ -147,7 +153,6 @@ async def get_image(image_id: str):
         return StreamingResponse(image_io, media_type=f"image/{image_extension}")
     else:
         raise HTTPException(status_code=404, detail="Image not found.")
-
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
