@@ -164,4 +164,4 @@ async def get_image(image_id: str):
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
-    return session.exec(select(User)).all()  # Retrieve all users
+    return session.exec(select(User)).all()  
