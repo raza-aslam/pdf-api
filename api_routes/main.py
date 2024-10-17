@@ -1,18 +1,17 @@
-from fastapi import FastAPI, HTTPException, Query
+from io import BytesIO
+import os
+import uuid
+import fitz #type: ignore
+from fastapi import FastAPI, HTTPException, Query, Request
 from sqlmodel import SQLModel, Field, select
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
 from Database.db import create_tables
 from Database.setting import DB_SESSION, sendername, senderemail, SMTP_PASSWORD
-import fitz #type: ignore
-import pytesseract #type: ignore
-from PIL import Image
-import io
-import base64
-
+from fastapi.middleware.cors import CORSMiddleware
 
 
 class User(SQLModel, table=True):
@@ -26,8 +25,19 @@ class User(SQLModel, table=True):
 # FastAPI app
 app = FastAPI(lifespan = create_tables)
 
-# Static PDF File Path (replace with your actual path)
-PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Use Path for PDF path
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://pdf-api-production-2f82.up.railway.app/"],  # Adjust this to your frontend's domain for better security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+PDF_PATH = Path(__file__).parent / "pdfs" / "MANAPRODUCTLIST.pdf"  # Path to the PDF
+
+in_memory_images = {}
+
+
  # Ensure this is correct
 
 # Static sender information
@@ -71,6 +81,10 @@ def send_email_with_pdf(to_email: str, username: str):
     except Exception as e:
         print(f"Failed to send email: {e}")  # Log the error
         raise HTTPException(status_code=500, detail=str(e))
+    
+    
+    
+
 @app.post("/send-pdf/")
 async def send_pdf(username: str, email: str, session: DB_SESSION):
     # Add the users in the database with pdf files
@@ -85,168 +99,69 @@ async def send_pdf(username: str, email: str, session: DB_SESSION):
         return JSONResponse(content={"message": f"PDF file sent successfully to {email}"}, status_code=200)
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
+@app.get("/read-pdf-steps/", response_class=JSONResponse)
+async def read_pdf_steps(request: Request, keyword: str):
+    # Check karein ke PDF file mojood hai ya nahi
+    if not PDF_PATH.exists():
+        raise HTTPException(status_code=404, detail="PDF file nahi mili.")
+
+    try:
+        # PDF ko open karein using PyMuPDF (Fitz)
+        doc = fitz.open(PDF_PATH)
+        total_pages = len(doc)
+        response_data = {"total_pages": total_pages}
+        matches = []
+
+        # Har page par keyword ko search karein
+        for page_num in range(total_pages):
+            page = doc.load_page(page_num)  # Page ko load karen
+            text = page.get_text("text")
+            
+            if keyword.lower() in text.lower():  # Case-insensitive search
+                # Agar keyword match kare to usko list mein add karen
+                matches.append({
+                    "page_number": page_num + 1,  # Page number ko 1-based index mein rakhein
+                    "text_snippet": text.strip()[:200]  # Text ka snippet dikhayein
+                })
+
+                # Image ko generate karein aur memory mein store karen
+                image_id = f"page-{page_num + 1}"
+                if image_id not in in_memory_images:
+                    pix = page.get_pixmap()  # Page ko image mein render karen
+                    img_io = BytesIO(pix.tobytes("png"))  # Image ko bytes mein convert karen
+                    img_io.seek(0)
+                    in_memory_images[image_id] = {"image_io": img_io, "extension": "png"}
+
+                # Add image URL for the match
+                matches[-1]["image_url"] = f"{request.base_url}get-image/{image_id}"
+
+        if not matches:
+            return JSONResponse(content={"message": f"Keyword '{keyword}' ke liye koi matches nahi mile."}, status_code=404)
+
+        response_data["matches"] = matches
+        response_data["total_matches"] = len(matches)
+        return JSONResponse(content=response_data, status_code=200)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF ko search karne mein error: {e}")
+
+
+
+# Endpoint to retrieve images by their unique ID
+# # Image ko unique ID ke zariye retrieve karne ka endpoint
+@app.get("/get-image/{image_id}")
+async def get_image(image_id: str):
+    image_info = in_memory_images.get(image_id)
+    if image_info:
+        image_io = image_info["image_io"]
+        image_extension = image_info["extension"]
+        # Stream ko shuru se set karen
+        image_io.seek(0)
+        return StreamingResponse(image_io, media_type=f"image/{image_extension}")
+    else:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
 
 @app.get("/get-emails/")
 def get_emails(session: DB_SESSION):
     return session.exec(select(User)).all()  # Retrieve all users
-
-
-# Route to read and return the PDF content
-# @app.get("/read-pdf/", response_class=JSONResponse)
-# async def read_pdf_with_ocr():
-#     # Check if the PDF file exists
-#     if not PDF_PATH.exists():
-#         raise HTTPException(status_code=404, detail="PDF file not found.")
-    
-#     try:
-#         # Open the PDF with PyMuPDF (fitz)
-#         doc = fitz.open(str(PDF_PATH))
-#         extracted_text = ""
-#         images = []  # List to store base64 encoded images
-        
-#         # Iterate over PDF pages
-#         for page_num in range(len(doc)):
-#             page = doc.load_page(page_num)  # Load the page
-#             pix = page.get_pixmap()  # Render the page as an image
-            
-#             # Convert the image to a base64 string
-#             img_bytes = pix.tobytes("png")
-#             base64_img = base64.b64encode(img_bytes).decode('utf-8')
-#             images.append(base64_img)  # Append the base64 image to the list
-            
-#             # Convert the image to PIL format and extract text using pytesseract
-#             img = Image.open(io.BytesIO(img_bytes))
-#             text = pytesseract.image_to_string(img)
-#             extracted_text += f"Page {page_num + 1}:\n{text}\n\n"
-        
-#         # If no text is found, we notify the user
-#         if not extracted_text.strip():
-#             extracted_text = "[No extractable text found in the PDF]"
-        
-#         # Return the extracted text and images
-#         return {"pdf_content": extracted_text, "images": images}
-    
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to read PDF with OCR: {e}")
-
-
-# @app.get("/read-pdf-step/", response_class=JSONResponse)
-# async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
-#     # Check if the PDF file exists
-#     if not PDF_PATH.exists():
-#         raise HTTPException(status_code=404, detail="PDF file not found.")
-
-#     try:
-#         # Open the PDF file with PyMuPDF (fitz)
-#         doc = fitz.open(str(PDF_PATH))
-#         total_pages = len(doc)
-
-#         # Check if the page number is valid
-#         if page_num < 1 or page_num > total_pages:
-#             raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
-
-#         # Load the specified page
-#         page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
-
-#         # Extract text from the page
-#         text = page.get_text("text").strip()
-
-#         # If the default method doesn't work, try extracting blocks of text (list of blocks)
-#         if not text:
-#             blocks = page.get_text("blocks")
-#             text = "\n".join([block[4] for block in blocks if block[4].strip()])
-
-#         # If still no text, try extracting individual words (list of words)
-#         if not text:
-#             words = page.get_text("words")
-#             text = " ".join([word[4] for word in words])
-
-#         # If still no text, notify the user
-#         if not text.strip():
-#             text = "[No extractable text found on this page]"
-
-#         # Extract images from the page
-#         images = []
-#         for img_index, img in enumerate(page.get_images(full=True)):
-#             xref = img[0]  # Extract the xref of the image
-#             base_image = doc.extract_image(xref)
-#             image_bytes = base_image["image"]
-#             image_base64 = base64.b64encode(image_bytes).decode('utf-8')  # Encode image to base64
-#             images.append({
-#                 "image_index": img_index, 
-#                 "image_base64": image_base64
-#             })
-
-#         # Return the extracted text and images for the current page
-#         response = {
-#             "page_number": page_num,
-#             "total_pages": total_pages,
-#             "text": text,
-#             "images": images
-#         }
-
-#         # Add a message prompting the user if they want to read the next page
-#         response["message"] = f"Do you want to read the next page? The PDF has {total_pages} pages in total."
-
-#         return response
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
-
-
-@app.get("/read-pdf-step/", response_class=JSONResponse)
-async def read_pdf_step(page_num: int = Query(1, description="Page number to read")):
-    # Check if the PDF file exists
-    if not PDF_PATH.exists():
-        raise HTTPException(status_code=404, detail="PDF file not found.")
-
-    try:
-        # Open the PDF file with PyMuPDF (fitz)
-        doc = fitz.open(str(PDF_PATH))
-        total_pages = len(doc)
-
-        # Check if the page number is valid
-        if page_num < 1 or page_num > total_pages:
-            raise HTTPException(status_code=400, detail=f"Invalid page number. The PDF has {total_pages} pages.")
-
-        # Load the specified page
-        page = doc.load_page(page_num - 1)  # Zero-indexed in PyMuPDF
-
-        # Extract text from the page
-        text = page.get_text("text").strip()
-
-        # If the default method doesn't work, try extracting blocks of text (list of blocks)
-        if not text:
-            blocks = page.get_text("blocks")
-            text = "\n".join([block[4] for block in blocks if block[4].strip()])
-
-        # If still no text, try extracting individual words (list of words)
-        if not text:
-            words = page.get_text("words")
-            text = " ".join([word[4] for word in words])
-
-        # If still no text, notify the user
-        if not text.strip():
-            text = "[No extractable text found on this page]"
-
-        # Return the extracted text for the current page
-        response = {
-            "page_number": page_num,
-            "total_pages": total_pages,
-            "text": text
-        }
-
-        # Add a message prompting the user if they want to read the next page
-        response["message"] = f"Do you want to read the next page? The PDF has {total_pages} pages in total."
-
-        return response
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
-
-
-# @app.get("/read-pdf/", response_class=FileResponse)
-# async def read_pdf():
-#     if not PDF_PATH.exists():
-#         raise HTTPException(status_code=404, detail="PDF file not found.")
-#     return FileResponse(PDF_PATH, media_type='application/pdf', filename=PDF_PATH.name)
