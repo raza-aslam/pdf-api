@@ -49,7 +49,13 @@ def send_email_with_pdf(to_email: str, username: str):
         msg['To'] = to_email
 
         # Email body content
-        msg.set_content(f"Hello {username},\n\nPlease find the requested PDF attached.")
+        url = "https://chatgpt.com/g/g-Vy9enxdqU-mana-healthcare-pvt-ltd"
+        msg.set_content(
+            f"Hello {username},\n\n"
+            f"Please find the requested PDF attached.\n\n"
+            f"You can also find the information of MANA HEALTHCARE (PVT) LTD the following link:\n{url}\n\n"
+            f"Best regards,\n{sendername}"
+        )
 
         # Attach the PDF file
         with open(PDF_PATH, 'rb') as f:
